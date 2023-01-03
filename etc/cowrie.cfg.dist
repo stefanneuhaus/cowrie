@@ -872,7 +872,9 @@ debug=false
 [output_virustotal]
 enabled = false
 api_key = 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+comment = True
 upload = True
+#collection_id = 0815
 debug = False
 scan_file = True
 scan_url = False

@@ -52,6 +52,7 @@ from cowrie.core.config import CowrieConfig
 
 COWRIE_USER_AGENT = "Cowrie Honeypot"
 VTAPI_URL = "https://www.virustotal.com/vtapi/v2/"
+VTAPIV3_URL = "https://virustotal.com/api/v3/"
 COMMENT = "First seen by #Cowrie SSH/telnet Honeypot http://github.com/cowrie/cowrie"
 TIME_SINCE_FIRST_DOWNLOAD = datetime.timedelta(minutes=1)
 
@@ -62,6 +63,7 @@ class Output(cowrie.core.output.Output):
     """
 
     apiKey: str
+    collectionId: str
     debug: bool = False
     commenttext: str
     agent: Any
@@ -69,13 +71,14 @@ class Output(cowrie.core.output.Output):
     scan_file: bool
     url_cache: dict[
         str, datetime.datetime
-    ] = {}  # url and last time succesfully submitted
+    ] = {}  # url and last time successfully submitted
 
     def start(self) -> None:
         """
         Start output plugin
         """
         self.apiKey = CowrieConfig.get("output_virustotal", "api_key")
+        self.collectionId = CowrieConfig.get("output_virustotal", "collection_id", fallback=None)
         self.debug = CowrieConfig.getboolean(
             "output_virustotal", "debug", fallback=False
         )
@@ -155,7 +158,7 @@ class Output(cowrie.core.output.Output):
                 d.addCallback(cbBody)
                 return d
             else:
-                log.msg(f"VT Request failed: {response.code} {response.phrase}")
+                log.msg(f"VT Request failed: {response.code} {response.phrase} ({response})")
 
         def cbBody(body):
             """
@@ -201,7 +204,7 @@ class Output(cowrie.core.output.Output):
                     fileName = entry["shasum"]
 
                 if self.upload is True:
-                    return self.postfile(entry["outfile"], fileName)
+                    return self.postfile(entry, fileName)
                 else:
                     return
             elif j["response_code"] == 1:
@@ -235,10 +238,11 @@ class Output(cowrie.core.output.Output):
         d.addErrback(cbError)
         return d
 
-    def postfile(self, artifact, fileName):
+    def postfile(self, entry, fileName):
         """
         Send a file to VirusTotal
         """
+        artifact = entry["outfile"]
         vtUrl = f"{VTAPI_URL}file/scan".encode()
         fields = {("apikey", self.apiKey)}
         files = {("file", fileName, open(artifact, "rb"))}
@@ -272,7 +276,7 @@ class Output(cowrie.core.output.Output):
                 d.addErrback(cbPartial)
                 return d
             else:
-                log.msg(f"VT Request failed: {response.code} {response.phrase}")
+                log.msg(f"VT Request failed: {response.code} {response.phrase} ({response})")
 
         def cbError(failure):
             failure.printTraceback()
@@ -287,12 +291,67 @@ class Output(cowrie.core.output.Output):
             log.msg("response=0: posting comment")
             if self.comment is True:
                 return self.postcomment(j["resource"])
-            else:
-                return
+            if self.collectionId is not None:
+                return self.addFileToCollection(entry["shasum"])
+            return
 
         d.addCallback(cbResponse)
         d.addErrback(cbError)
         return d
+
+    def addFileToCollection(self, fileId):
+        """
+        Add file to a VT collection
+        """
+        vtUrl = f"{VTAPIV3_URL}collections/{self.collectionId}/files".encode()
+        headers = http_headers.Headers({
+            "User-Agent": [COWRIE_USER_AGENT],
+            "Content-Type": "application/json",
+            "x-apikey": self.apiKey
+        })
+        data = {
+            "data": [
+                {
+                    "type": "file",
+                    "id": fileId
+                }
+            ]
+        }
+        body = StringProducer(urlencode(data).encode("utf-8"))
+        d = self.agent.request(b"POST", vtUrl, headers, body)
+
+        def cbBody(body):
+            return processResult(body)
+
+        def cbPartial(failure):
+            """
+            Google HTTP Server does not set Content-Length. Twisted marks it as partial
+            """
+            return processResult(failure.value.response)
+
+        def cbResponse(response):
+            if response.code == 200:
+                d = client.readBody(response)
+                d.addCallback(cbBody)
+                d.addErrback(cbPartial)
+                return d
+            else:
+                log.msg(f"VT Request failed: {response.code} {response.phrase} ({response})")
+
+        def cbError(failure):
+            failure.printTraceback()
+
+        def processResult(result):
+            if self.debug:
+                log.msg(f"VT add2collection result: {result}")
+            result = result.decode("utf8")
+            j = json.loads(result)
+            return j["response_code"]
+
+        d.addCallback(cbResponse)
+        d.addErrback(cbError)
+        return d
+
 
     def scanurl(self, entry):
         """
@@ -326,7 +385,7 @@ class Output(cowrie.core.output.Output):
                 d.addCallback(cbBody)
                 return d
             else:
-                log.msg(f"VT Request failed: {response.code} {response.phrase}")
+                log.msg(f"VT Request failed: {response.code} {response.phrase} ({response})")
 
         def cbBody(body):
             """
@@ -432,7 +491,7 @@ class Output(cowrie.core.output.Output):
                 d.addErrback(cbPartial)
                 return d
             else:
-                log.msg(f"VT Request failed: {response.code} {response.phrase}")
+                log.msg(f"VT Request failed: {response.code} {response.phrase} ({response})")
 
         def cbError(failure):
             failure.printTraceback()
