@@ -290,7 +290,7 @@ class Output(cowrie.core.output.Output):
             # so always create the comment
             log.msg("response=0: posting comment")
             if self.comment is True:
-                return self.postcomment(j["resource"])
+                self.postcomment(j["resource"])
             if self.collectionId is not None:
                 return self.addFileToCollection(entry["shasum"])
             return
