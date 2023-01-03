@@ -317,7 +317,7 @@ class Output(cowrie.core.output.Output):
                 }
             ]
         }
-        body = StringProducer(urlencode(data).encode("utf-8"))
+        body = StringProducer(urlencode(json.dumps(data)).encode("utf-8"))
         d = self.agent.request(b"POST", vtUrl, headers, body)
 
         def cbBody(body):
